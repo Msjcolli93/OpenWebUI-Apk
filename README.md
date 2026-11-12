@@ -16,6 +16,10 @@ On first launch it asks for your server address (for example `https://chat.examp
 
 ## What's new
 
+### v1.4.1
+
+- **Update check fix:** the updater now identifies itself to GitHub, falls back to the public release page if the API request fails, and shows the real error if the check can't complete. Note: the update check exists from v1.4 onward, so older installs must be updated by hand once.
+
 ### v1.4
 
 - **In-app updates:** the app checks the latest GitHub release (at most every 12 hours, or on demand from settings > Check for updates) and offers to download and install it.

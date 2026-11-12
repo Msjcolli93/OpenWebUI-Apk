@@ -473,12 +473,17 @@ public class MainActivity extends Activity {
     private void checkForUpdates(boolean manual) {
         if (!manual && System.currentTimeMillis() - prefs.getLong("lastUpdateCheck", 0) < 12L * 3600 * 1000) return;
         prefs.edit().putLong("lastUpdateCheck", System.currentTimeMillis()).apply();
+        if (manual) Toast.makeText(this, "Checking for updates\u2026", Toast.LENGTH_SHORT).show();
         new Thread(() -> {
+            String tag = null, apk = null;
+            Exception err = null;
             try {
                 HttpURLConnection c = (HttpURLConnection) new URL(RELEASES_API).openConnection();
-                c.setConnectTimeout(8000);
-                c.setReadTimeout(8000);
+                c.setConnectTimeout(10000);
+                c.setReadTimeout(10000);
                 c.setRequestProperty("Accept", "application/vnd.github+json");
+                c.setRequestProperty("User-Agent", "OpenWebUI-Android");
+                if (c.getResponseCode() != 200) throw new Exception("HTTP " + c.getResponseCode());
                 ByteArrayOutputStream bo = new ByteArrayOutputStream();
                 try (InputStream is = c.getInputStream()) {
                     byte[] buf = new byte[4096];
@@ -486,8 +491,7 @@ public class MainActivity extends Activity {
                     while ((n = is.read(buf)) > 0) bo.write(buf, 0, n);
                 }
                 JSONObject j = new JSONObject(bo.toString("UTF-8"));
-                String tag = j.optString("tag_name").replaceFirst("^v", "");
-                String apk = null;
+                tag = j.optString("tag_name").replaceFirst("^v", "");
                 JSONArray assets = j.optJSONArray("assets");
                 if (assets != null) {
                     for (int i = 0; i < assets.length(); i++) {
@@ -495,12 +499,39 @@ public class MainActivity extends Activity {
                         if (a.optString("name").endsWith(".apk")) apk = a.optString("browser_download_url");
                     }
                 }
-                String cur = getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
-                final String fApk = apk, fTag = tag, fCur = cur;
-                if (apk != null && isNewer(tag, cur)) runOnUiThread(() -> showUpdate(fTag, fApk));
-                else if (manual) runOnUiThread(() -> Toast.makeText(this, "You're up to date (v" + fCur + ")", Toast.LENGTH_LONG).show());
             } catch (Exception e) {
-                if (manual) runOnUiThread(() -> Toast.makeText(this, "Couldn't check for updates", Toast.LENGTH_LONG).show());
+                err = e;
+            }
+            if (tag == null || tag.isEmpty() || apk == null) {
+                // fallback: read the redirect of the public "latest release" page (no API, no rate limit)
+                try {
+                    HttpURLConnection c = (HttpURLConnection) new URL("https://github.com/Msjcolli93/OpenWebUI-Apk/releases/latest").openConnection();
+                    c.setInstanceFollowRedirects(false);
+                    c.setConnectTimeout(10000);
+                    c.setReadTimeout(10000);
+                    c.setRequestProperty("User-Agent", "OpenWebUI-Android");
+                    String loc = c.getHeaderField("Location");
+                    if (loc != null && loc.contains("/tag/")) {
+                        tag = loc.substring(loc.lastIndexOf("/tag/") + 5).replaceFirst("^v", "");
+                        apk = "https://github.com/Msjcolli93/OpenWebUI-Apk/releases/download/v" + tag + "/OpenWebUI-v" + tag + ".apk";
+                        err = null;
+                    } else if (err == null) {
+                        err = new Exception("no release found");
+                    }
+                } catch (Exception e) {
+                    err = e;
+                }
+            }
+            String cur;
+            try { cur = getPackageManager().getPackageInfo(getPackageName(), 0).versionName; } catch (Exception e) { cur = "0"; }
+            final String fTag = tag, fApk = apk, fCur = cur;
+            final Exception fErr = err;
+            if (fTag != null && fApk != null && isNewer(fTag, fCur)) {
+                runOnUiThread(() -> showUpdate(fTag, fApk));
+            } else if (manual) {
+                runOnUiThread(() -> Toast.makeText(this, fTag == null
+                    ? "Couldn't check for updates: " + (fErr == null ? "unknown error" : fErr.getClass().getSimpleName() + " " + fErr.getMessage())
+                    : "You're up to date (v" + fCur + ")", Toast.LENGTH_LONG).show());
             }
         }).start();
     }
