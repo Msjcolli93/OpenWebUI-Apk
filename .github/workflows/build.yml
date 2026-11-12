@@ -1,7 +1,11 @@
 name: Build APK
 on:
   push:
+    branches: [main]
+    tags: ['v*']
   workflow_dispatch:
+permissions:
+  contents: write
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -12,5 +16,13 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with: { gradle-version: 8.13 }
       - run: gradle assembleDebug --no-daemon
+      - name: Name the APK
+        run: cp app/build/outputs/apk/debug/app-debug.apk "OpenWebUI-${{ github.ref_name }}.apk"
       - uses: actions/upload-artifact@v4
         with: { name: OpenWebUI-apk, path: app/build/outputs/apk/debug/app-debug.apk }
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: OpenWebUI-${{ github.ref_name }}.apk
+          generate_release_notes: true

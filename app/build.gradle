@@ -11,9 +11,16 @@ android {
     }
     // Release signing is optional. Provide a keystore at app/owui-release.jks and set
     // OWUI_KS_PASS / OWUI_KEY_ALIAS / OWUI_KEY_PASS in your environment to build a signed release.
+    // Fixed (non-secret) debug key so every CI build has the same signature and can update in place.
     def ks = file('owui-release.jks')
-    if (ks.exists()) {
-        signingConfigs {
+    signingConfigs {
+        debug {
+            storeFile file('debug.keystore')
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+        }
+        if (ks.exists()) {
             release {
                 storeFile ks
                 storePassword System.getenv('OWUI_KS_PASS')

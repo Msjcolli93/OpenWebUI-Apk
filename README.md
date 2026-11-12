@@ -35,9 +35,11 @@ On first launch it asks for your server address (for example `https://chat.examp
 
 ## Install
 
-1. Build the APK (see below), or download the `OpenWebUI-apk` artifact from the latest **Actions** run.
-2. Copy it to your phone and open it. Allow installs from that source if Android asks.
+1. On your Android phone, open the [latest release](https://github.com/Msjcolli93/OpenWebUI-Apk/releases/latest) and tap the `.apk` file under **Assets**.
+2. Open the downloaded file. Allow installs from your browser if Android asks.
 3. Enter your Open WebUI server address.
+
+Releases are signed with a fixed key, so new versions install over old ones. If you previously installed a build from Android Studio or an older artifact, uninstall it first (different signing key).
 
 ## Build
 
