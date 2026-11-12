@@ -2,7 +2,6 @@ name: Build APK
 on:
   push:
     branches: [main]
-    tags: ['v*']
   workflow_dispatch:
 permissions:
   contents: write
@@ -17,12 +16,21 @@ jobs:
         with: { gradle-version: 8.13 }
       - run: gradle assembleDebug --no-daemon
       - name: Name the APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk "OpenWebUI-${{ github.ref_name }}.apk"
+        id: ver
+        run: |
+          V=$(grep -oP "versionName '\K[^']+" app/build.gradle)
+          echo "v=$V" >> "$GITHUB_OUTPUT"
+          cp app/build/outputs/apk/debug/app-debug.apk "OpenWebUI-v$V.apk"
       - uses: actions/upload-artifact@v4
         with: { name: OpenWebUI-apk, path: app/build/outputs/apk/debug/app-debug.apk }
       - name: Publish release
-        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: OpenWebUI-${{ github.ref_name }}.apk
-          generate_release_notes: true
+          tag_name: v${{ steps.ver.outputs.v }}
+          target_commitish: ${{ github.sha }}
+          name: Open WebUI Android v${{ steps.ver.outputs.v }}
+          files: OpenWebUI-v${{ steps.ver.outputs.v }}.apk
+          make_latest: true
+          body: |
+            Debug-signed APK. Download the .apk below on your Android phone and open it to install.
+            See the README for what's new.
