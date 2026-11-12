@@ -14,6 +14,9 @@ On first launch it asks for your server address (for example `https://chat.examp
 - Links to other sites open in your browser
 - See [What's new](#whats-new) for the latest additions
 
+## v1.4.2
+- New red and black app icon and splash screen.
+
 ## What's new
 
 ### v1.4.1
