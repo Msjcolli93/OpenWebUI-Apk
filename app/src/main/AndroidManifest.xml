@@ -7,6 +7,10 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"/>
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
+    <uses-permission android:name="android.permission.USE_BIOMETRIC"/>
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28"/>
     <application
         android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher"
@@ -29,7 +33,19 @@
             </intent-filter>
             <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts"/>
         </activity>
-        <service android:name=".KeepAliveService" android:exported="false" android:foregroundServiceType="dataSync"/>
+        <service android:name=".KeepAliveService" android:exported="false" android:foregroundServiceType="dataSync|microphone"/>
+        <activity android:name=".QuickPromptActivity" android:exported="false"
+            android:theme="@android:style/Theme.DeviceDefault.Dialog" android:taskAffinity=""
+            android:excludeFromRecents="true" android:windowSoftInputMode="stateVisible"/>
+        <provider android:name="androidx.core.content.FileProvider" android:authorities="com.openwebui.app.fileprovider"
+            android:exported="false" android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths"/>
+        </provider>
+        <service android:name=".AssistService" android:exported="true" android:permission="android.permission.BIND_VOICE_INTERACTION">
+            <meta-data android:name="android.voice_interaction" android:resource="@xml/voice_interaction"/>
+            <intent-filter><action android:name="android.service.voice.VoiceInteractionService"/></intent-filter>
+        </service>
+        <service android:name=".AssistSessionService" android:exported="true" android:permission="android.permission.BIND_VOICE_INTERACTION"/>
         <receiver android:name=".NewChatWidget" android:exported="false">
             <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE"/></intent-filter>
             <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_info"/>

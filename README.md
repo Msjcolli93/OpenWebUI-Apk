@@ -16,6 +16,19 @@ On first launch it asks for your server address (for example `https://chat.examp
 
 ## What's new
 
+### v1.4
+
+- **In-app updates:** the app checks the latest GitHub release (at most every 12 hours, or on demand from settings > Check for updates) and offers to download and install it.
+- **Multiple servers:** save several servers (home, remote, etc.) and switch between them from settings > Servers.
+- **Pull to refresh:** pull down from the very top edge of the screen to reload the page.
+- **Real biometric prompt:** on Android 11+ the lock uses the system fingerprint or face prompt, with PIN/pattern as backup.
+- **Better notifications:** the notification shows the start of the reply, and tapping it opens that exact chat.
+- **Quick-prompt widget:** the home-screen widget now has **New chat** and **Ask...** buttons. Ask opens a small box; type your question and a new chat starts with it.
+- **Call mode:** settings > Call mode keeps the screen on, routes audio to the speaker and keeps the microphone live while the app is in the background or the screen is locked, for Open WebUI's voice call.
+- **Better downloads:** files from Open WebUI (including exports) save to your Downloads folder, with a progress notification for regular downloads.
+- **Camera in chat:** the attach-file chooser now offers the camera so you can take a photo and attach it.
+- **Default assistant (experimental):** Open WebUI can be chosen as the default digital assistant in Android settings, so long-pressing home or power opens a new chat.
+
 ### v1.3
 
 - **Open WebUI Community inside the app:** a floating puzzle button opens openwebui.com (plugins, tools, functions, prompts) in a panel on top of your chat. Drag the button up or down to move it. It turns green while a Community session is open in the background.

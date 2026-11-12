@@ -3,6 +3,24 @@ package com.openwebui.app;
 import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.DownloadManager;
+import android.content.BroadcastReceiver;
+import android.content.ContentValues;
+import android.content.Context;
+import android.content.IntentFilter;
+import android.hardware.biometrics.BiometricPrompt;
+import android.media.AudioManager;
+import android.os.CancellationSignal;
+import android.os.Environment;
+import android.provider.MediaStore;
+import android.provider.Settings;
+import androidx.core.content.FileProvider;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import org.json.JSONArray;
 import android.app.KeyguardManager;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -61,6 +79,20 @@ public class MainActivity extends Activity {
     private LinearLayout panel;
     private TextView fab;
     private boolean communityActive = false;
+    public static final String ACTION_OPEN_CHAT = "com.openwebui.app.OPEN_CHAT";
+    private static final String AUTH = "com.openwebui.app.fileprovider";
+    private static final String RELEASES_API = "https://api.github.com/repos/Msjcolli93/OpenWebUI-Apk/releases/latest";
+    private Uri captureUri;
+    private long updateDownloadId = -1;
+    private boolean pendingInstall = false;
+    private boolean callMode = false;
+    private boolean authPending = false;
+    private final BroadcastReceiver dlReceiver = new BroadcastReceiver() {
+        @Override public void onReceive(Context c, Intent i) {
+            long id = i.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1);
+            if (id != -1 && id == updateDownloadId) installUpdate();
+        }
+    };
 
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
@@ -86,9 +118,29 @@ public class MainActivity extends Activity {
         s.setMediaPlaybackRequiresUserGesture(false);
         s.setAllowFileAccess(false);
         web.addJavascriptInterface(new Object() {
-            @JavascriptInterface public void responseDone() { runOnUiThread(() -> notifyDone()); }
+            @JavascriptInterface public void responseDone(String preview, String url) { runOnUiThread(() -> notifyDone(preview, url)); }
         }, "AndroidNotify");
+        web.addJavascriptInterface(new Object() {
+            @JavascriptInterface public void save(String name, String mime, String b64) { saveBase64(name, mime, b64); }
+        }, "AndroidDl");
         CookieManager.getInstance().setAcceptCookie(true);
+        final float[] pull = new float[2];
+        web.setOnTouchListener((v, ev) -> {
+            switch (ev.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    pull[0] = ev.getY() < dp(56) ? ev.getY() : -1;
+                    pull[1] = 0;
+                    break;
+                case MotionEvent.ACTION_MOVE:
+                    if (pull[0] >= 0 && pull[1] == 0 && ev.getY() - pull[0] > dp(150)) {
+                        pull[1] = 1;
+                        web.reload();
+                        Toast.makeText(this, "Refreshing\u2026", Toast.LENGTH_SHORT).show();
+                    }
+                    break;
+            }
+            return false;
+        });
         CookieManager.getInstance().setAcceptThirdPartyCookies(web, true);
 
         web.setWebViewClient(new WebViewClient() {
@@ -108,7 +160,7 @@ public class MainActivity extends Activity {
             @Override public void onPageStarted(WebView v, String u, Bitmap f) { bar.setVisibility(View.VISIBLE); }
             @Override public void onPageFinished(WebView v, String u) {
                 bar.setVisibility(View.GONE);
-                v.evaluateJavascript("(function(){if(window.__owuiWatch)return;window.__owuiWatch=1;var was=false;setInterval(function(){var on=!!document.getElementById('stop-response-button');if(was&&!on&&window.AndroidNotify)AndroidNotify.responseDone();was=on;},1000);})();", null);
+                v.evaluateJavascript("(function(){if(window.__owuiWatch)return;window.__owuiWatch=1;var was=false;setInterval(function(){var on=!!document.getElementById('stop-response-button');if(was&&!on&&window.AndroidNotify){var m=document.querySelectorAll('[id^=\"message-\"]');var t=m.length?m[m.length-1].innerText:'';AndroidNotify.responseDone((t||'').trim().substring(0,160),location.href);}was=on;},1000);})();", null);
                 if (pendingShareUri != null && u != null && !u.startsWith("about:")) {
                     final Uri share = pendingShareUri;
                     pendingShareUri = null;
@@ -132,7 +184,7 @@ public class MainActivity extends Activity {
             @Override public boolean onShowFileChooser(WebView v, ValueCallback<Uri[]> cb, FileChooserParams p) {
                 if (fileCb != null) fileCb.onReceiveValue(null);
                 fileCb = cb;
-                try { startActivityForResult(p.createIntent(), REQ_FILE); }
+                try { startActivityForResult(buildChooser(p), REQ_FILE); }
                 catch (Exception e) { fileCb = null; return false; }
                 return true;
             }
@@ -145,9 +197,13 @@ public class MainActivity extends Activity {
                 });
             }
         });
-        web.setDownloadListener((url, ua, cd, mime, len) -> startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url))));
+        web.setDownloadListener((url, ua, cd, mime, len) -> handleDownload(web, url, ua, cd, mime));
 
         askStartupPermissions();
+        ensureProfile();
+        IntentFilter dlf = new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE);
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(dlReceiver, dlf, Context.RECEIVER_EXPORTED);
+        else registerReceiver(dlReceiver, dlf);
 
         if (prefs.getBoolean("lock", false)) {
             lockCover.setVisibility(View.VISIBLE);
@@ -159,6 +215,7 @@ public class MainActivity extends Activity {
         String url = prefs.getString("url", null);
         if (url == null) askUrl("url", "Open WebUI server address", true);
         else if (!handleIntent(getIntent())) web.loadUrl(url);
+        checkForUpdates(false);
     }
 
     @Override protected void onNewIntent(Intent intent) {
@@ -174,7 +231,7 @@ public class MainActivity extends Activity {
         if (base == null) return false;
         String slash = base.endsWith("/") ? "" : "/";
         String act = in.getAction();
-        if (Intent.ACTION_SEND.equals(act) || ACTION_NEW_CHAT.equals(act)) minimizeCommunity();
+        if (Intent.ACTION_SEND.equals(act) || ACTION_NEW_CHAT.equals(act) || ACTION_OPEN_CHAT.equals(act)) minimizeCommunity();
         if (Intent.ACTION_SEND.equals(act)) {
             Uri stream = in.getParcelableExtra(Intent.EXTRA_STREAM);
             String text = in.getStringExtra(Intent.EXTRA_TEXT);
@@ -186,6 +243,13 @@ public class MainActivity extends Activity {
             } else if (text != null) {
                 triedFallback = false;
                 web.loadUrl(base + slash + "?q=" + Uri.encode(text));
+                return true;
+            }
+        } else if (ACTION_OPEN_CHAT.equals(act)) {
+            String target = in.getStringExtra("url");
+            if (target != null && isOwnHost(target)) {
+                triedFallback = false;
+                web.loadUrl(target);
                 return true;
             }
         } else if (ACTION_NEW_CHAT.equals(act)) {
@@ -259,7 +323,10 @@ public class MainActivity extends Activity {
             "Require screen lock on open: " + (lock ? "ON" : "OFF"),
             "Keep screen on: " + (keep ? "ON" : "OFF"),
             "Reload",
-            "Open Community (plugins & tools)"
+            "Open Community (plugins & tools)",
+            "Servers (" + profiles().length() + " saved)",
+            "Call mode (hands-free voice): " + (callMode ? "ON" : "OFF"),
+            "Check for updates"
         };
         new AlertDialog.Builder(this).setTitle("Open WebUI").setItems(items, (d, w) -> {
             switch (w) {
@@ -276,6 +343,9 @@ public class MainActivity extends Activity {
                     if (u != null) web.loadUrl(u);
                     break;
                 case 5: openCommunity(); break;
+                case 6: showServers(); break;
+                case 7: toggleCallMode(); break;
+                case 8: checkForUpdates(true); break;
             }
         }).show();
     }
@@ -292,7 +362,7 @@ public class MainActivity extends Activity {
     }
 
     private void applyKeepScreenOn() {
-        if (prefs.getBoolean("keepOn", false)) getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        if (prefs.getBoolean("keepOn", false) || callMode) getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
     }
 
@@ -313,6 +383,290 @@ public class MainActivity extends Activity {
                 prefs.edit().putString(key, u).apply();
                 if (key.equals("url")) { triedFallback = false; web.loadUrl(u); }
             }).show();
+    }
+
+    // ---- own host check ----
+    private boolean isOwnHost(String u) {
+        String h = hostOf(u);
+        return h != null && (h.equals(hostOf(prefs.getString("url", ""))) || h.equals(hostOf(prefs.getString("fallback", ""))));
+    }
+
+    // ---- file chooser with camera ----
+    private Intent buildChooser(WebChromeClient.FileChooserParams p) {
+        Intent chooser = Intent.createChooser(p.createIntent(), "Choose file");
+        captureUri = null;
+        if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            try {
+                File dir = new File(getCacheDir(), "photos");
+                dir.mkdirs();
+                File f = File.createTempFile("photo_", ".jpg", dir);
+                captureUri = FileProvider.getUriForFile(this, AUTH, f);
+                Intent cam = new Intent(MediaStore.ACTION_IMAGE_CAPTURE).putExtra(MediaStore.EXTRA_OUTPUT, captureUri)
+                    .addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                chooser.putExtra(Intent.EXTRA_INITIAL_INTENTS, new Intent[]{cam});
+            } catch (Exception e) { captureUri = null; }
+        }
+        return chooser;
+    }
+
+    // ---- downloads ----
+    private void handleDownload(WebView source, String url, String ua, String cd, String mime) {
+        String type = (mime == null || mime.isEmpty()) ? "application/octet-stream" : mime;
+        String name = URLUtil.guessFileName(url, cd, type);
+        if (url.startsWith("blob:")) {
+            String js = "(function(){fetch('" + url.replace("'", "%27") + "').then(function(r){return r.blob();}).then(function(b){var fr=new FileReader();"
+                + "fr.onload=function(){AndroidDl.save(" + JSONObject.quote(name) + "," + JSONObject.quote(type) + ",String(fr.result).split(',')[1]);};fr.readAsDataURL(b);});})();";
+            source.evaluateJavascript(js, null);
+            return;
+        }
+        if (!url.startsWith("http")) {
+            try { startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url))); } catch (Exception ignored) {}
+            return;
+        }
+        try {
+            DownloadManager.Request r = new DownloadManager.Request(Uri.parse(url));
+            String ck = CookieManager.getInstance().getCookie(url);
+            if (ck != null) r.addRequestHeader("Cookie", ck);
+            if (ua != null) r.addRequestHeader("User-Agent", ua);
+            r.setMimeType(type).setTitle(name)
+                .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, name);
+            ((DownloadManager) getSystemService(DOWNLOAD_SERVICE)).enqueue(r);
+            Toast.makeText(this, "Downloading " + name, Toast.LENGTH_SHORT).show();
+        } catch (Exception e) {
+            try { startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url))); } catch (Exception ignored) {}
+        }
+    }
+
+    private void saveBase64(String name, String mime, String b64) {
+        try {
+            byte[] data = Base64.decode(b64, Base64.DEFAULT);
+            if (Build.VERSION.SDK_INT >= 29) {
+                ContentValues v = new ContentValues();
+                v.put(MediaStore.Downloads.DISPLAY_NAME, name);
+                v.put(MediaStore.Downloads.MIME_TYPE, mime);
+                v.put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS);
+                Uri u = getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, v);
+                try (OutputStream os = getContentResolver().openOutputStream(u)) { os.write(data); }
+            } else {
+                File d = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
+                try (FileOutputStream os = new FileOutputStream(new File(d, name))) { os.write(data); }
+            }
+            runOnUiThread(() -> Toast.makeText(this, "Saved to Downloads: " + name, Toast.LENGTH_LONG).show());
+        } catch (Exception e) {
+            runOnUiThread(() -> Toast.makeText(this, "Couldn't save the file", Toast.LENGTH_LONG).show());
+        }
+    }
+
+    // ---- in-app updates ----
+    private boolean isNewer(String a, String b) {
+        String[] x = a.split("\\."), y = b.split("\\.");
+        for (int i = 0; i < Math.max(x.length, y.length); i++) {
+            int p = 0, q = 0;
+            try { if (i < x.length) p = Integer.parseInt(x[i].trim()); } catch (Exception ignored) {}
+            try { if (i < y.length) q = Integer.parseInt(y[i].trim()); } catch (Exception ignored) {}
+            if (p != q) return p > q;
+        }
+        return false;
+    }
+
+    private void checkForUpdates(boolean manual) {
+        if (!manual && System.currentTimeMillis() - prefs.getLong("lastUpdateCheck", 0) < 12L * 3600 * 1000) return;
+        prefs.edit().putLong("lastUpdateCheck", System.currentTimeMillis()).apply();
+        new Thread(() -> {
+            try {
+                HttpURLConnection c = (HttpURLConnection) new URL(RELEASES_API).openConnection();
+                c.setConnectTimeout(8000);
+                c.setReadTimeout(8000);
+                c.setRequestProperty("Accept", "application/vnd.github+json");
+                ByteArrayOutputStream bo = new ByteArrayOutputStream();
+                try (InputStream is = c.getInputStream()) {
+                    byte[] buf = new byte[4096];
+                    int n;
+                    while ((n = is.read(buf)) > 0) bo.write(buf, 0, n);
+                }
+                JSONObject j = new JSONObject(bo.toString("UTF-8"));
+                String tag = j.optString("tag_name").replaceFirst("^v", "");
+                String apk = null;
+                JSONArray assets = j.optJSONArray("assets");
+                if (assets != null) {
+                    for (int i = 0; i < assets.length(); i++) {
+                        JSONObject a = assets.getJSONObject(i);
+                        if (a.optString("name").endsWith(".apk")) apk = a.optString("browser_download_url");
+                    }
+                }
+                String cur = getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+                final String fApk = apk, fTag = tag, fCur = cur;
+                if (apk != null && isNewer(tag, cur)) runOnUiThread(() -> showUpdate(fTag, fApk));
+                else if (manual) runOnUiThread(() -> Toast.makeText(this, "You're up to date (v" + fCur + ")", Toast.LENGTH_LONG).show());
+            } catch (Exception e) {
+                if (manual) runOnUiThread(() -> Toast.makeText(this, "Couldn't check for updates", Toast.LENGTH_LONG).show());
+            }
+        }).start();
+    }
+
+    private void showUpdate(String tag, String apkUrl) {
+        new AlertDialog.Builder(this).setTitle("Update available")
+            .setMessage("Open WebUI v" + tag + " is available. Download and install it now?")
+            .setPositiveButton("Download", (d, w) -> {
+                try {
+                    File f = new File(getExternalFilesDir(null), "update.apk");
+                    if (f.exists()) f.delete();
+                    DownloadManager.Request r = new DownloadManager.Request(Uri.parse(apkUrl))
+                        .setTitle("Open WebUI v" + tag)
+                        .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                        .setDestinationInExternalFilesDir(this, null, "update.apk");
+                    updateDownloadId = ((DownloadManager) getSystemService(DOWNLOAD_SERVICE)).enqueue(r);
+                    Toast.makeText(this, "Downloading update\u2026", Toast.LENGTH_SHORT).show();
+                } catch (Exception e) {
+                    Toast.makeText(this, "Couldn't start the download", Toast.LENGTH_LONG).show();
+                }
+            })
+            .setNegativeButton("Later", null).show();
+    }
+
+    private void installUpdate() {
+        if (Build.VERSION.SDK_INT >= 26 && !getPackageManager().canRequestPackageInstalls()) {
+            pendingInstall = true;
+            Toast.makeText(this, "Allow installs from this app, then come back", Toast.LENGTH_LONG).show();
+            startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + getPackageName())));
+            return;
+        }
+        try {
+            Uri u = FileProvider.getUriForFile(this, AUTH, new File(getExternalFilesDir(null), "update.apk"));
+            startActivity(new Intent(Intent.ACTION_VIEW).setDataAndType(u, "application/vnd.android.package-archive")
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK));
+        } catch (Exception e) {
+            Toast.makeText(this, "Couldn't open the update", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    // ---- server profiles ----
+    private JSONArray profiles() {
+        try { return new JSONArray(prefs.getString("profiles", "[]")); } catch (Exception e) { return new JSONArray(); }
+    }
+
+    private void saveProfiles(JSONArray a) { prefs.edit().putString("profiles", a.toString()).apply(); }
+
+    private void ensureProfile() {
+        String cur = prefs.getString("url", "");
+        if (cur.isEmpty()) return;
+        JSONArray a = profiles();
+        for (int i = 0; i < a.length(); i++) {
+            JSONObject o = a.optJSONObject(i);
+            if (o != null && cur.equals(o.optString("url"))) return;
+        }
+        try {
+            JSONObject o = new JSONObject();
+            o.put("name", a.length() == 0 ? "Main" : "Server " + (a.length() + 1));
+            o.put("url", cur);
+            o.put("fallback", prefs.getString("fallback", ""));
+            a.put(o);
+            saveProfiles(a);
+        } catch (Exception ignored) {}
+    }
+
+    private void switchTo(String url, String fallback) {
+        SharedPreferences.Editor ed = prefs.edit().putString("url", url);
+        if (fallback == null || fallback.isEmpty()) ed.remove("fallback"); else ed.putString("fallback", fallback);
+        ed.apply();
+        triedFallback = false;
+        minimizeCommunity();
+        web.loadUrl(url);
+    }
+
+    private void showServers() {
+        ensureProfile();
+        final JSONArray a = profiles();
+        String cur = prefs.getString("url", "");
+        ArrayList<String> labels = new ArrayList<>();
+        for (int i = 0; i < a.length(); i++) {
+            JSONObject o = a.optJSONObject(i);
+            if (o == null) o = new JSONObject();
+            labels.add((cur.equals(o.optString("url")) ? "\u2713 " : "") + o.optString("name") + " \u2014 " + o.optString("url"));
+        }
+        labels.add("+ Add server");
+        labels.add("Remove current server from list");
+        new AlertDialog.Builder(this).setTitle("Servers").setItems(labels.toArray(new String[0]), (d, w) -> {
+            int n = a.length();
+            if (w < n) {
+                JSONObject o = a.optJSONObject(w);
+                if (o != null) switchTo(o.optString("url"), o.optString("fallback"));
+            } else if (w == n) addServerDialog();
+            else removeCurrentServer();
+        }).show();
+    }
+
+    private void addServerDialog() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(20), dp(8), dp(20), 0);
+        final EditText name = new EditText(this);
+        name.setHint("Name (e.g. Home)");
+        final EditText addr = new EditText(this);
+        addr.setHint("https://chat.example.com");
+        addr.setInputType(InputType.TYPE_TEXT_VARIATION_URI);
+        final EditText fb = new EditText(this);
+        fb.setHint("Fallback address (optional)");
+        fb.setInputType(InputType.TYPE_TEXT_VARIATION_URI);
+        box.addView(name);
+        box.addView(addr);
+        box.addView(fb);
+        new AlertDialog.Builder(this).setTitle("Add server").setView(box).setPositiveButton("Save", (d, w) -> {
+            String u = addr.getText().toString().trim();
+            if (u.isEmpty()) return;
+            if (!u.matches("^https?://.*")) u = "https://" + u;
+            String f = fb.getText().toString().trim();
+            if (!f.isEmpty() && !f.matches("^https?://.*")) f = "https://" + f;
+            String n = name.getText().toString().trim();
+            try {
+                JSONArray a = profiles();
+                JSONObject o = new JSONObject();
+                o.put("name", n.isEmpty() ? "Server " + (a.length() + 1) : n);
+                o.put("url", u);
+                o.put("fallback", f);
+                a.put(o);
+                saveProfiles(a);
+            } catch (Exception ignored) {}
+            switchTo(u, f);
+        }).setNegativeButton("Cancel", null).show();
+    }
+
+    private void removeCurrentServer() {
+        String cur = prefs.getString("url", "");
+        JSONArray a = profiles();
+        for (int i = 0; i < a.length(); i++) {
+            JSONObject o = a.optJSONObject(i);
+            if (o != null && cur.equals(o.optString("url"))) { a.remove(i); break; }
+        }
+        saveProfiles(a);
+        JSONObject first = a.length() > 0 ? a.optJSONObject(0) : null;
+        if (first != null) switchTo(first.optString("url"), first.optString("fallback"));
+        else Toast.makeText(this, "Removed from the list (still connected)", Toast.LENGTH_SHORT).show();
+    }
+
+    // ---- call mode ----
+    private void toggleCallMode() {
+        callMode = !callMode;
+        applyCallMode();
+    }
+
+    private void applyCallMode() {
+        AudioManager am = (AudioManager) getSystemService(AUDIO_SERVICE);
+        if (callMode) {
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            try { am.setMode(AudioManager.MODE_IN_COMMUNICATION); am.setSpeakerphoneOn(true); } catch (Exception ignored) {}
+            KeepAliveService.mic = true;
+            if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                try { startForegroundService(new Intent(this, KeepAliveService.class)); } catch (Exception ignored) {}
+            }
+            Toast.makeText(this, "Call mode on: mic stays live in the background", Toast.LENGTH_LONG).show();
+        } else {
+            applyKeepScreenOn();
+            try { am.setMode(AudioManager.MODE_NORMAL); am.setSpeakerphoneOn(false); } catch (Exception ignored) {}
+            KeepAliveService.mic = false;
+            if (inForeground) stopService(new Intent(this, KeepAliveService.class));
+        }
     }
 
     // ---- community hub ----
@@ -435,6 +789,7 @@ public class MainActivity extends Activity {
                 return true;
             }
         });
+        community.setDownloadListener((url, ua, cd, mime, len) -> handleDownload(community, url, ua, cd, mime));
         panel.addView(community, new LinearLayout.LayoutParams(-1, 0, 1f));
         root.addView(panel, new FrameLayout.LayoutParams(-1, -1));
     }
@@ -467,9 +822,29 @@ public class MainActivity extends Activity {
     // ---- lock ----
     private void requireAuth() {
         KeyguardManager km = (KeyguardManager) getSystemService(KEYGUARD_SERVICE);
-        Intent i = km.isDeviceSecure() ? km.createConfirmDeviceCredentialIntent("Open WebUI", "Unlock to continue") : null;
-        if (i == null) { unlocked = true; lockCover.setVisibility(View.GONE); return; }
-        startActivityForResult(i, REQ_AUTH);
+        if (!km.isDeviceSecure()) { unlocked = true; lockCover.setVisibility(View.GONE); return; }
+        authPending = true;
+        if (Build.VERSION.SDK_INT >= 30) {
+            BiometricPrompt bp = new BiometricPrompt.Builder(this)
+                .setTitle("Open WebUI").setSubtitle("Unlock to continue")
+                .setAllowedAuthenticators(android.hardware.biometrics.BiometricManager.Authenticators.BIOMETRIC_STRONG
+                    | android.hardware.biometrics.BiometricManager.Authenticators.DEVICE_CREDENTIAL)
+                .build();
+            bp.authenticate(new CancellationSignal(), getMainExecutor(), new BiometricPrompt.AuthenticationCallback() {
+                @Override public void onAuthenticationSucceeded(BiometricPrompt.AuthenticationResult r) {
+                    authPending = false; unlocked = true; lockCover.setVisibility(View.GONE);
+                }
+                @Override public void onAuthenticationError(int code, CharSequence msg) {
+                    authPending = false;
+                    if (code == 5) return; // canceled by the system (e.g. app left the screen); asks again on resume
+                    finish();
+                }
+            });
+        } else {
+            Intent i = km.createConfirmDeviceCredentialIntent("Open WebUI", "Unlock to continue");
+            if (i == null) { authPending = false; unlocked = true; lockCover.setVisibility(View.GONE); return; }
+            startActivityForResult(i, REQ_AUTH);
+        }
     }
 
     // ---- permissions / notifications ----
@@ -477,39 +852,58 @@ public class MainActivity extends Activity {
         if (prefs.getBoolean("askedPerms", false)) return;
         ArrayList<String> need = new ArrayList<>();
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) need.add(Manifest.permission.RECORD_AUDIO);
+        if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) need.add(Manifest.permission.CAMERA);
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) need.add(Manifest.permission.POST_NOTIFICATIONS);
         prefs.edit().putBoolean("askedPerms", true).apply();
         if (!need.isEmpty()) requestPermissions(need.toArray(new String[0]), REQ_START);
     }
 
-    private void notifyDone() {
+    private void notifyDone(String preview, String url) {
         if (inForeground) return;
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return;
         NotificationManager nm = getSystemService(NotificationManager.class);
         nm.createNotificationChannel(new NotificationChannel("done", "Response finished", NotificationManager.IMPORTANCE_DEFAULT));
-        PendingIntent pi = PendingIntent.getActivity(this, 0,
-            new Intent(this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT), PendingIntent.FLAG_IMMUTABLE);
-        nm.notify(notifId++, new android.app.Notification.Builder(this, "done")
+        int id = notifId++;
+        Intent open = new Intent(this, MainActivity.class).setAction(ACTION_OPEN_CHAT).putExtra("url", url)
+            .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
+        PendingIntent pi = PendingIntent.getActivity(this, id, open, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+        String text = (preview == null || preview.trim().isEmpty()) ? "Your response is ready" : preview.trim();
+        nm.notify(id, new android.app.Notification.Builder(this, "done")
             .setSmallIcon(android.R.drawable.stat_notify_chat).setContentTitle("Open WebUI")
-            .setContentText("Your response is ready").setContentIntent(pi).setAutoCancel(true).build());
+            .setContentText(text).setStyle(new android.app.Notification.BigTextStyle().bigText(text))
+            .setContentIntent(pi).setAutoCancel(true).build());
     }
 
     @Override protected void onPause() {
         super.onPause();
         inForeground = false;
         pausedAt = System.currentTimeMillis();
+        KeepAliveService.mic = callMode;
         try { startForegroundService(new Intent(this, KeepAliveService.class)); } catch (Exception ignored) {}
     }
 
     @Override protected void onResume() {
         super.onResume();
         inForeground = true;
-        stopService(new Intent(this, KeepAliveService.class));
-        if (prefs.getBoolean("lock", false) && unlocked && System.currentTimeMillis() - pausedAt > 60000) {
+        if (!callMode) stopService(new Intent(this, KeepAliveService.class));
+        if (pendingInstall && Build.VERSION.SDK_INT >= 26 && getPackageManager().canRequestPackageInstalls()) {
+            pendingInstall = false;
+            installUpdate();
+        }
+        boolean lock = prefs.getBoolean("lock", false);
+        if (lock && unlocked && System.currentTimeMillis() - pausedAt > 60000) {
             unlocked = false;
             lockCover.setVisibility(View.VISIBLE);
             requireAuth();
+        } else if (lock && !unlocked && !authPending) {
+            requireAuth();
         }
+    }
+
+    @Override protected void onDestroy() {
+        try { unregisterReceiver(dlReceiver); } catch (Exception ignored) {}
+        if (callMode) { callMode = false; applyCallMode(); }
+        super.onDestroy();
     }
 
     private long lastBack;
@@ -526,9 +920,16 @@ public class MainActivity extends Activity {
 
     @Override protected void onActivityResult(int rq, int rs, Intent d) {
         if (rq == REQ_FILE && fileCb != null) {
-            fileCb.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(rs, d));
+            Uri[] res = null;
+            if (rs == RESULT_OK) {
+                if (d != null && (d.getData() != null || d.getClipData() != null)) res = WebChromeClient.FileChooserParams.parseResult(rs, d);
+                else if (captureUri != null) res = new Uri[]{captureUri};
+            }
+            captureUri = null;
+            fileCb.onReceiveValue(res);
             fileCb = null;
         } else if (rq == REQ_AUTH) {
+            authPending = false;
             if (rs == RESULT_OK) { unlocked = true; lockCover.setVisibility(View.GONE); }
             else finish();
         } else super.onActivityResult(rq, rs, d);
