@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Open WebUI</string>
+    <string name="new_chat">New chat</string>
+    <string name="new_chat_long">Start a new chat</string>
+</resources>

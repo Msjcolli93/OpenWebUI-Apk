@@ -1,0 +1,32 @@
+plugins { id 'com.android.application' }
+android {
+    namespace 'com.openwebui.app'
+    compileSdk 34
+    defaultConfig {
+        applicationId 'com.openwebui.app'
+        minSdk 26
+        targetSdk 34
+        versionCode 3
+        versionName '1.2'
+    }
+    // Release signing is optional. Provide a keystore at app/owui-release.jks and set
+    // OWUI_KS_PASS / OWUI_KEY_ALIAS / OWUI_KEY_PASS in your environment to build a signed release.
+    def ks = file('owui-release.jks')
+    if (ks.exists()) {
+        signingConfigs {
+            release {
+                storeFile ks
+                storePassword System.getenv('OWUI_KS_PASS')
+                keyAlias System.getenv('OWUI_KEY_ALIAS') ?: 'owui'
+                keyPassword System.getenv('OWUI_KEY_PASS') ?: System.getenv('OWUI_KS_PASS')
+            }
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            if (ks.exists()) signingConfig signingConfigs.release
+        }
+    }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+}
