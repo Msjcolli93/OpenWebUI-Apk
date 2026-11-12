@@ -16,6 +16,14 @@ On first launch it asks for your server address (for example `https://chat.examp
 
 ## What's new
 
+### v1.3
+
+- **Open WebUI Community inside the app:** a floating puzzle button opens openwebui.com (plugins, tools, functions, prompts) in a panel on top of your chat. Drag the button up or down to move it. It turns green while a Community session is open in the background.
+- **Panel controls:** **← Chat** minimizes the panel and returns you to your chat without losing your place, **⌂** goes to the Community home page, and **✕** closes the session. The Android Back button goes back through Community pages, then minimizes.
+- **Import to your server:** when a Community page sends you to your own Open WebUI address (for example **Import to WebUI**), the app closes the panel and opens that page in your chat.
+- **Community sign-in:** sign in on the Community site inside the panel; the login is remembered. Sign-in with GitHub works in embedded browsers. Google blocks sign-in from embedded browsers, so use GitHub or email if Google is refused.
+- Also available from settings (Back twice): **Open Community (plugins & tools)**.
+
 ### v1.2
 
 - **Share to Open WebUI:** shared text opens a new chat with the text filled in. Shared files and images (3 MB max) are attached to a new chat. That attach step works by simulating a file selection in the page, which is the least certain part.

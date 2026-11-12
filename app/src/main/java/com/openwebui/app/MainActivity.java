@@ -21,7 +21,14 @@ import android.util.Base64;
 import android.view.View;
 import android.view.WindowManager;
 import android.webkit.*;
+import android.graphics.Color;
+import android.graphics.drawable.GradientDrawable;
+import android.os.Message;
+import android.view.Gravity;
+import android.view.MotionEvent;
 import android.widget.EditText;
+import android.widget.LinearLayout;
+import android.widget.TextView;
 import android.widget.FrameLayout;
 import android.widget.ProgressBar;
 import android.widget.Toast;
@@ -49,6 +56,11 @@ public class MainActivity extends Activity {
     private long pausedAt = 0;
     private int notifId = 100;
     private Uri pendingShareUri;
+    private static final String COMMUNITY_URL = "https://openwebui.com";
+    private WebView community;
+    private LinearLayout panel;
+    private TextView fab;
+    private boolean communityActive = false;
 
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
@@ -62,6 +74,7 @@ public class MainActivity extends Activity {
         lockCover.setVisibility(View.GONE);
         root.addView(web, new FrameLayout.LayoutParams(-1, -1));
         root.addView(bar, new FrameLayout.LayoutParams(-1, 8));
+        buildCommunity(root);
         root.addView(lockCover, new FrameLayout.LayoutParams(-1, -1));
         setContentView(root);
         applyKeepScreenOn();
@@ -161,6 +174,7 @@ public class MainActivity extends Activity {
         if (base == null) return false;
         String slash = base.endsWith("/") ? "" : "/";
         String act = in.getAction();
+        if (Intent.ACTION_SEND.equals(act) || ACTION_NEW_CHAT.equals(act)) minimizeCommunity();
         if (Intent.ACTION_SEND.equals(act)) {
             Uri stream = in.getParcelableExtra(Intent.EXTRA_STREAM);
             String text = in.getStringExtra(Intent.EXTRA_TEXT);
@@ -244,7 +258,8 @@ public class MainActivity extends Activity {
             "Fallback address" + (fb.isEmpty() ? " (not set)" : ": " + fb),
             "Require screen lock on open: " + (lock ? "ON" : "OFF"),
             "Keep screen on: " + (keep ? "ON" : "OFF"),
-            "Reload"
+            "Reload",
+            "Open Community (plugins & tools)"
         };
         new AlertDialog.Builder(this).setTitle("Open WebUI").setItems(items, (d, w) -> {
             switch (w) {
@@ -260,6 +275,7 @@ public class MainActivity extends Activity {
                     String u = prefs.getString("url", null);
                     if (u != null) web.loadUrl(u);
                     break;
+                case 5: openCommunity(); break;
             }
         }).show();
     }
@@ -297,6 +313,155 @@ public class MainActivity extends Activity {
                 prefs.edit().putString(key, u).apply();
                 if (key.equals("url")) { triedFallback = false; web.loadUrl(u); }
             }).show();
+    }
+
+    // ---- community hub ----
+    private int dp(int v) { return (int) (v * getResources().getDisplayMetrics().density + 0.5f); }
+
+    private TextView barButton(String text, int color) {
+        TextView t = new TextView(this);
+        t.setText(text);
+        t.setTextColor(color);
+        t.setTextSize(16);
+        t.setGravity(Gravity.CENTER);
+        t.setPadding(dp(12), 0, dp(12), 0);
+        return t;
+    }
+
+    private void buildCommunity(FrameLayout root) {
+        int bg = getColor(R.color.bg), fg = getColor(R.color.fg);
+
+        // floating button (drag up/down to move, tap to open or minimize)
+        fab = new TextView(this);
+        fab.setText("\uD83E\uDDE9");
+        fab.setTextSize(22);
+        fab.setGravity(Gravity.CENTER);
+        GradientDrawable gd = new GradientDrawable();
+        gd.setShape(GradientDrawable.OVAL);
+        gd.setColor(Color.parseColor("#4F46E5"));
+        fab.setBackground(gd);
+        fab.setElevation(dp(6));
+        fab.setAlpha(0.92f);
+        FrameLayout.LayoutParams flp = new FrameLayout.LayoutParams(dp(52), dp(52));
+        flp.gravity = Gravity.END | Gravity.CENTER_VERTICAL;
+        flp.rightMargin = dp(8);
+        root.addView(fab, flp);
+        final float[] drag = new float[3];
+        fab.setOnTouchListener((v, e) -> {
+            switch (e.getAction()) {
+                case MotionEvent.ACTION_DOWN:
+                    drag[0] = e.getRawY(); drag[1] = v.getTranslationY(); drag[2] = 0;
+                    return true;
+                case MotionEvent.ACTION_MOVE:
+                    float dy = e.getRawY() - drag[0];
+                    if (Math.abs(dy) > dp(8)) drag[2] = 1;
+                    if (drag[2] == 1) v.setTranslationY(drag[1] + dy);
+                    return true;
+                case MotionEvent.ACTION_UP:
+                    if (drag[2] == 0) {
+                        if (panel.getVisibility() == View.VISIBLE) minimizeCommunity(); else openCommunity();
+                    }
+                    return true;
+            }
+            return false;
+        });
+
+        // full-screen panel with its own header
+        panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setBackgroundColor(bg);
+        panel.setClickable(true);
+        panel.setVisibility(View.GONE);
+
+        LinearLayout top = new LinearLayout(this);
+        top.setOrientation(LinearLayout.HORIZONTAL);
+        top.setGravity(Gravity.CENTER_VERTICAL);
+        TextView back = barButton("\u2190 Chat", fg);
+        TextView home = barButton("\u2302", fg);
+        TextView title = new TextView(this);
+        title.setText("Open WebUI Community");
+        title.setTextColor(fg);
+        title.setTextSize(15);
+        title.setGravity(Gravity.CENTER);
+        TextView close = barButton("\u2715", fg);
+        top.addView(back, new LinearLayout.LayoutParams(-2, -1));
+        top.addView(title, new LinearLayout.LayoutParams(0, -1, 1f));
+        top.addView(home, new LinearLayout.LayoutParams(-2, -1));
+        top.addView(close, new LinearLayout.LayoutParams(-2, -1));
+        back.setOnClickListener(v -> minimizeCommunity());
+        home.setOnClickListener(v -> community.loadUrl(COMMUNITY_URL));
+        close.setOnClickListener(v -> closeCommunity());
+        panel.addView(top, new LinearLayout.LayoutParams(-1, dp(48)));
+
+        community = new WebView(this);
+        WebSettings cs = community.getSettings();
+        cs.setJavaScriptEnabled(true);
+        cs.setDomStorageEnabled(true);
+        cs.setSupportMultipleWindows(true);
+        cs.setJavaScriptCanOpenWindowsAutomatically(true);
+        cs.setAllowFileAccess(false);
+        CookieManager.getInstance().setAcceptThirdPartyCookies(community, true);
+        community.setWebViewClient(new WebViewClient() {
+            @Override public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest r) {
+                Uri u = r.getUrl();
+                String sch = u.getScheme();
+                if (sch == null) return true;
+                if (!sch.equals("http") && !sch.equals("https")) {
+                    try { startActivity(new Intent(Intent.ACTION_VIEW, u)); } catch (Exception ignored) {}
+                    return true;
+                }
+                String host = u.getHost();
+                if (host != null && (host.equals(hostOf(prefs.getString("url", ""))) || host.equals(hostOf(prefs.getString("fallback", ""))))) {
+                    // e.g. "Import to Open WebUI": jump back to your own server inside the app
+                    minimizeCommunity();
+                    triedFallback = false;
+                    web.loadUrl(u.toString());
+                    return true;
+                }
+                return false;
+            }
+        });
+        community.setWebChromeClient(new WebChromeClient() {
+            @Override public boolean onCreateWindow(WebView view, boolean isDialog, boolean isUserGesture, Message resultMsg) {
+                WebView tmp = new WebView(MainActivity.this);
+                tmp.setWebViewClient(new WebViewClient() {
+                    @Override public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest r) {
+                        community.loadUrl(r.getUrl().toString());
+                        return true;
+                    }
+                });
+                ((WebView.WebViewTransport) resultMsg.obj).setWebView(tmp);
+                resultMsg.sendToTarget();
+                return true;
+            }
+        });
+        panel.addView(community, new LinearLayout.LayoutParams(-1, 0, 1f));
+        root.addView(panel, new FrameLayout.LayoutParams(-1, -1));
+    }
+
+    private void openCommunity() {
+        if (!communityActive) community.loadUrl(COMMUNITY_URL);
+        communityActive = true;
+        panel.setVisibility(View.VISIBLE);
+        updateFab();
+    }
+
+    private void minimizeCommunity() {
+        if (panel == null) return;
+        panel.setVisibility(View.GONE);
+        updateFab();
+    }
+
+    private void closeCommunity() {
+        panel.setVisibility(View.GONE);
+        communityActive = false;
+        community.loadUrl("about:blank");
+        community.clearHistory();
+        updateFab();
+    }
+
+    private void updateFab() {
+        ((GradientDrawable) fab.getBackground()).setColor(Color.parseColor(communityActive ? "#16A34A" : "#4F46E5"));
     }
 
     // ---- lock ----
@@ -349,6 +514,10 @@ public class MainActivity extends Activity {
 
     private long lastBack;
     @Override public void onBackPressed() {
+        if (panel != null && panel.getVisibility() == View.VISIBLE) {
+            if (community.canGoBack()) community.goBack(); else minimizeCommunity();
+            return;
+        }
         if (web.canGoBack()) { web.goBack(); return; }
         long now = System.currentTimeMillis();
         if (now - lastBack < 1500) showMenu();

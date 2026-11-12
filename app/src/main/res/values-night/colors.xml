@@ -1,4 +1,5 @@
 <resources>
     <color name="bg">#111111</color>
     <color name="splash_icon">#FFFFFF</color>
+    <color name="fg">#FFFFFF</color>
 </resources>
