@@ -2,4 +2,6 @@
     <string name="app_name">Open WebUI</string>
     <string name="new_chat">New chat</string>
     <string name="new_chat_long">Start a new chat</string>
+    <string name="widget_new_label">Open WebUI: New chat</string>
+    <string name="widget_recent_label">Open WebUI: Recent chats</string>
 </resources>

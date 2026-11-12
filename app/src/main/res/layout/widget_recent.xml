@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:background="@drawable/widget_bg" android:orientation="vertical" android:padding="8dp">
+    <TextView android:id="@+id/recent_new" android:layout_width="match_parent" android:layout_height="40dp"
+        android:gravity="center_vertical" android:paddingStart="8dp" android:text="+  New chat"
+        android:textColor="#E11D2E" android:textSize="15sp" android:textStyle="bold"/>
+    <ListView android:id="@+id/recent_list" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1"
+        android:divider="@null"/>
+    <TextView android:id="@+id/recent_empty" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1"
+        android:gravity="center" android:text="Recent chats show up here after a reply finishes"
+        android:textColor="#BBBBBB" android:textSize="13sp"/>
+</LinearLayout>

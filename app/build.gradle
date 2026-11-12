@@ -6,8 +6,8 @@ android {
         applicationId 'com.openwebui.app'
         minSdk 26
         targetSdk 34
-        versionCode 7
-        versionName '1.4.2'
+        versionCode 8
+        versionName '1.5.0'
     }
     // Release signing is optional. Provide a keystore at app/owui-release.jks and set
     // OWUI_KS_PASS / OWUI_KEY_ALIAS / OWUI_KEY_PASS in your environment to build a signed release.

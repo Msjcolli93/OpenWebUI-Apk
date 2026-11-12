@@ -14,7 +14,20 @@ On first launch it asks for your server address (for example `https://chat.examp
 - Links to other sites open in your browser
 - See [What's new](#whats-new) for the latest additions
 
-## v1.4.2
+## v1.5.0
+Settings (Back twice) is now split into **Chat tools** and **Appearance & behavior**.
+
+- **Share a chat** as text or a Markdown file; **pin a chat** to the home screen; **offline chats**: replies are cached on the phone so you can read them without a connection.
+- **Voice:** a floating mic button dictates into the message box using Android's own speech recognizer (works over plain http), and a speaker button reads the last reply aloud. Optional auto-read.
+- **Reply from a notification:** the notification has a Reply box; sending it opens the chat and posts your message.
+- **Text size and theme** per server, **links** open in your browser or an in-app panel, **vibrate/sound** when a reply finishes.
+- **Server status dot** (green/amber/red) with automatic switch to the fallback address when the main server is down.
+- **Per-server settings** for lock, keep-screen-on, text size and theme.
+- **Floating bubble** over other apps while Open WebUI is in the background (needs "Display over other apps").
+- **Recent chats widget** and **server list export/import** (Servers menu). Android's automatic backup also carries your settings to a new phone.
+- Shared images retry attaching if the page was slow to load. New red/black icon, widgets and buttons.
+
+### v1.4.2
 - New red and black app icon and splash screen.
 
 ## What's new
