@@ -23,6 +23,30 @@ jobs:
           cp app/build/outputs/apk/debug/app-debug.apk "OpenWebUI-v$V.apk"
       - uses: actions/upload-artifact@v4
         with: { name: OpenWebUI-apk, path: app/build/outputs/apk/debug/app-debug.apk }
+      - name: Publish v1.0 (archived build)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0
+          target_commitish: ${{ github.sha }}
+          name: Open WebUI Android v1.0
+          files: legacy/OpenWebUI-v1.0.apk
+          make_latest: false
+          body: |
+            Initial release: WebView wrapper with a server address prompt, file uploads, voice permissions and external link handling.
+
+            Archived APK. The tag points at the current source, not the v1.0 source. This APK uses a different signing key than v1.2, so uninstall it before installing v1.2 or later.
+      - name: Publish v1.1 (archived build)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.1
+          target_commitish: ${{ github.sha }}
+          name: Open WebUI Android v1.1
+          files: legacy/OpenWebUI-v1.1.apk
+          make_latest: false
+          body: |
+            Adds notifications when a response finishes while the app is in the background.
+
+            Archived APK. The tag points at the current source, not the v1.1 source. This APK uses a different signing key than v1.2, so uninstall it before installing v1.2 or later.
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:

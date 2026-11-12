@@ -39,7 +39,7 @@ On first launch it asks for your server address (for example `https://chat.examp
 2. Open the downloaded file. Allow installs from your browser if Android asks.
 3. Enter your Open WebUI server address.
 
-Releases are signed with a fixed key, so new versions install over old ones. If you previously installed a build from Android Studio or an older artifact, uninstall it first (different signing key).
+Releases are signed with a fixed key, so new versions install over old ones. Older versions are on the [Releases page](https://github.com/Msjcolli93/OpenWebUI-Apk/releases). If you previously installed a build from Android Studio or an older artifact, uninstall it first (different signing key).
 
 ## Build
 
